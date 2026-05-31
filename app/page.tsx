@@ -14,7 +14,6 @@ export default function Home() {
   ]);
   const [walletConnected, setWalletConnected] = useState(false);
   const [accountAddress, setAccountAddress] = useState("");
-  const [walletInstance, setWalletInstance] = useState<any>(null);
 
   const quests = [
     "Say GM to Shelby Protocol", 
@@ -29,68 +28,62 @@ export default function Home() {
   const done = completed.filter(Boolean).length;
   const progress = (done / quests.length) * 100;
 
-  // ব্রাউজার লোড হওয়ার পর Petra/Aptos ওয়ালেট খুঁজে বের করার ইফেক্ট লুপ
-  useEffect(() => {
-    const detectWallet = () => {
-      const win = typeof window !== "undefined" ? (window as any) : null;
-      if (win) {
-        const provider = win.aptos || win.petra || (win.AptosWallet ? win.AptosWallet : null);
-        if (provider) {
-          setWalletInstance(provider);
-        }
-      }
-    };
+  // Petra / Aptos ডিরেক্ট উইন্ডো প্রোভাইডার চেক
+  const getPetraProvider = () => {
+    if (typeof window !== "undefined") {
+      return (window as any).aptos || (window as any).petra;
+    }
+    return null;
+  };
 
-    detectWallet();
-    // যদি এক্সটেনশন লোড হতে দেরি হয়, তার জন্য একটা ব্যাকআপ ইভেন্ট লিসেনার
-    window.addEventListener("load", detectWallet);
-    return () => window.removeEventListener("load", detectWallet);
-  }, []);
-
-  // ওয়ালেট কানেক্ট করার ফাংশন
+  // ওয়ালেট কানেক্ট করার ফিক্সড ফাংশন
   const connectWallet = async () => {
     try {
-      // যদি স্টেট-এ ইনস্ট্যান্স না থাকে, সরাসরি উইন্ডো থেকে আবার ট্রাই করবে
-      const win = typeof window !== "undefined" ? (window as any) : null;
-      const currentWallet = walletInstance || win?.aptos || win?.petra;
+      const provider = getPetraProvider();
 
-      if (!currentWallet) {
-        alert("Petra Wallet Extension পাওয়া যায়নি! দয়া করে নিশ্চিত করুন আপনার ব্রাউজারে Petra ইন্সটলড আছে।");
+      if (!provider) {
+        alert("Petra Wallet Extension পাওয়া যায়নি! দয়া করে এক্সটেনশনটি চেক করুন।");
         return;
       }
 
-      // কানেক্ট রিকোয়েস্ট
-      const account = await currentWallet.connect();
-      // এড্রেস এক্সট্রাক্ট করা (অবজেক্ট বা স্ট্রিং ফরম্যাট হ্যান্ডেল করতে)
-      const address = account?.address || account;
+      // Petra-র অফিশিয়াল ফ্যালব্যাক অ্যাকাউন্ট সিকোয়েন্স ট্রাই করা হচ্ছে
+      let accountInfo;
+      try {
+        // প্রথমে সরাসরি কানেক্ট ট্রাই
+        accountInfo = await provider.connect();
+      } catch (connectErr) {
+        console.log("Direct connect standard rejected, trying fallback account call...", connectErr);
+        // যদি রিজেক্ট হয়, তাহলে অলরেডি ওপেনড সেশনের অ্যাকাউন্ট ডেটা রিদ করার চেষ্টা
+        accountInfo = await provider.account();
+      }
+
+      const address = accountInfo?.address || accountInfo;
 
       if (address && typeof address === "string") {
         setAccountAddress(address);
         setWalletConnected(true);
+      } else if (accountInfo?.address) {
+        setAccountAddress(accountInfo.address);
+        setWalletConnected(true);
       } else {
-        // অল্টারনেটিভ ডিরেক্ট অ্যাকাউন্ট মেথড কল
-        const activeAccount = await currentWallet.account();
-        if (activeAccount?.address) {
-          setAccountAddress(activeAccount.address);
+        // শেষ চেষ্টা: ডিরেক্টলি অ্যাক্টিভ নেটওয়ার্ক মেথড কল দিয়ে ভেরিফাই করা
+        const data = await provider.account();
+        if(data?.address) {
+          setAccountAddress(data.address);
           setWalletConnected(true);
         }
       }
     } catch (err) {
-      console.error("Connection Error: ", err);
-      alert("Petra Wallet কানেক্ট করা যায়নি। দয়া করে আপনার ওয়ালেট এক্সটেনশনটি আনলক (Password দিন) করে আবার চেষ্টা করুন।");
+      console.error("Final Connection Error: ", err);
+      alert("Petra Wallet কানেকশন ইনিশিয়েট করতে পারেনি। দয়া করে আপনার ব্রাউজারের এক্সটেনশন আইকনে ক্লিক করে Petra Wallet-টি নিজে থেকে একবার আনলক (Unlock) করে নিন, তারপর এই বাটনে ক্লিক করুন।");
     }
   };
 
-  // Shelbynet-এ কাস্টম ট্রানজেকশন ইন্টারঅ্যাকশন
+  // Shelbynet-এ কাস্টম ট্রানজেকশন
   const toggleQuest = async (index: number) => {
     try {
-      const win = typeof window !== "undefined" ? (window as any) : null;
-      const currentWallet = walletInstance || win?.aptos || win?.petra;
-
-      if (!currentWallet) {
-        alert("Wallet structure missing!");
-        return;
-      }
+      const provider = getPetraProvider();
+      if (!provider) return;
 
       const transactionPayload = {
         type: "entry_function_payload",
@@ -99,18 +92,17 @@ export default function Home() {
         arguments: [accountAddress || "0x1", "0"], 
       };
 
-      const pendingTx = await currentWallet.signAndSubmitTransaction(transactionPayload);
+      const pendingTx = await provider.signAndSubmitTransaction(transactionPayload);
       const txHash = pendingTx?.hash || pendingTx;
 
       const updated = [...completed];
       updated[index] = true;
       setCompleted(updated);
 
-      alert(`Quest Completed Successfully! 🎉\n\nTask: ${quests[index]}\n\nNetwork: Shelbynet\nTX Hash: ${txHash}`);
-
+      alert(`Quest Completed Successfully! 🎉\n\nTask: ${quests[index]}\n\nTX Hash: ${txHash}`);
     } catch (err) {
       console.error("Tx Error: ", err);
-      alert("ট্রানজেকশন ক্যানসেল করা হয়েছে বা Shelbynet-এ ফেইল হয়েছে।");
+      alert("ট্রানজেকশনটি সম্পন্ন করা যায়নি।");
     }
   };
 
