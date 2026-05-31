@@ -14,6 +14,7 @@ export default function Home() {
   ]);
   const [walletConnected, setWalletConnected] = useState(false);
   const [accountAddress, setAccountAddress] = useState("");
+  const [provider, setProvider] = useState<any>(null);
 
   const quests = [
     "Say GM to Shelby Protocol", 
@@ -28,71 +29,81 @@ export default function Home() {
   const done = completed.filter(Boolean).length;
   const progress = (done / quests.length) * 100;
 
-  // Petra / Aptos ডিরেক্ট উইন্ডো প্রোভাইডার চেক
-  const getPetraProvider = () => {
-    if (typeof window !== "undefined") {
-      return (window as any).aptos || (window as any).petra;
-    }
-    return null;
-  };
+  // Petra / Aptos অফিশিয়াল ইভেন্ট লিসেনার লজিক (Deep Research Fix)
+  useEffect(() => {
+    const handleInitialized = () => {
+      if ("aptos" in window) {
+        setProvider((window as any).aptos);
+      } else if ("petra" in window) {
+        setProvider((window as any).petra);
+      }
+    };
 
-  // ওয়ালেট কানেক্ট করার ফিক্সড ফাংশন
+    // যদি Petra অলরেডি ব্রাউজারে ইনজেক্টেড থাকে
+    if ("aptos" in window || "petra" in window) {
+      handleInitialized();
+    }
+
+    // Petra-র নিজস্ব অফিশিয়াল ইনজেকশন লিসেনার ইভেন্ট
+    window.addEventListener("aptos#initialized", handleInitialized);
+    
+    return () => {
+      window.removeEventListener("aptos#initialized", handleInitialized);
+    };
+  }, []);
+
+  // ওয়ালেট কানেক্ট করার মাস্টার ফাংশন
   const connectWallet = async () => {
     try {
-      const provider = getPetraProvider();
+      // ফ্যালব্যাক রান যদি কোনো কারণে স্টেট আপডেট হতে দেরি হয়
+      const activeProvider = provider || (typeof window !== "undefined" ? (window as any).aptos : null);
 
-      if (!provider) {
-        alert("Petra Wallet Extension পাওয়া যায়নি! দয়া করে এক্সটেনশনটি চেক করুন।");
+      if (!activeProvider) {
+        alert("Petra Wallet খুঁজে পাওয়া যায়নি! দয়া করে আপনার ব্রাউজারে Petra Wallet এক্সটেনশনটি চেক করুন এবং এটি আনলক করুন।");
         return;
       }
 
-      // Petra-র অফিশিয়াল ফ্যালব্যাক অ্যাকাউন্ট সিকোয়েন্স ট্রাই করা হচ্ছে
-      let accountInfo;
-      try {
-        // প্রথমে সরাসরি কানেক্ট ট্রাই
-        accountInfo = await provider.connect();
-      } catch (connectErr) {
-        console.log("Direct connect standard rejected, trying fallback account call...", connectErr);
-        // যদি রিজেক্ট হয়, তাহলে অলরেডি ওপেনড সেশনের অ্যাকাউন্ট ডেটা রিদ করার চেষ্টা
-        accountInfo = await provider.account();
-      }
-
-      const address = accountInfo?.address || accountInfo;
+      // Petra অফিশিয়াল হ্যান্ডশেক এবং কানেকশন রিকোয়েস্ট
+      const connectionResponse = await activeProvider.connect();
+      
+      // বিভিন্ন Petra ভার্সনের ডেটা স্ট্রাকচার হ্যান্ডেল করা
+      const address = connectionResponse?.address || connectionResponse;
 
       if (address && typeof address === "string") {
         setAccountAddress(address);
         setWalletConnected(true);
-      } else if (accountInfo?.address) {
-        setAccountAddress(accountInfo.address);
-        setWalletConnected(true);
       } else {
-        // শেষ চেষ্টা: ডিরেক্টলি অ্যাক্টিভ নেটওয়ার্ক মেথড কল দিয়ে ভেরিফাই করা
-        const data = await provider.account();
-        if(data?.address) {
-          setAccountAddress(data.address);
+        // ওল্ড জেনারেশন মেথড কল ব্যাকআপ
+        const accountData = await activeProvider.account();
+        if (accountData?.address) {
+          setAccountAddress(accountData.address);
           setWalletConnected(true);
         }
       }
-    } catch (err) {
-      console.error("Final Connection Error: ", err);
-      alert("Petra Wallet কানেকশন ইনিশিয়েট করতে পারেনি। দয়া করে আপনার ব্রাউজারের এক্সটেনশন আইকনে ক্লিক করে Petra Wallet-টি নিজে থেকে একবার আনলক (Unlock) করে নিন, তারপর এই বাটনে ক্লিক করুন।");
+    } catch (err: any) {
+      console.error("Deep Connection Error:", err);
+      alert("Failed to connect wallet: " + (err?.message || "User rejected or wallet is locked."));
     }
   };
 
-  // Shelbynet-এ কাস্টম ট্রানজেকশন
+  // Shelbynet ট্রানজেকশন ইন্টারঅ্যাকশন
   const toggleQuest = async (index: number) => {
     try {
-      const provider = getPetraProvider();
-      if (!provider) return;
+      const activeProvider = provider || (typeof window !== "undefined" ? (window as any).aptos : null);
+      if (!activeProvider) {
+        alert("Wallet provider missing!");
+        return;
+      }
 
-      const transactionPayload = {
+      // Aptos L1 স্ট্যান্ডার্ড জিরো-ভ্যালু কোর ট্রান্সফার পেলোড
+      const payload = {
         type: "entry_function_payload",
         function: "0x1::aptos_account::transfer",
         type_arguments: [],
         arguments: [accountAddress || "0x1", "0"], 
       };
 
-      const pendingTx = await provider.signAndSubmitTransaction(transactionPayload);
+      const pendingTx = await activeProvider.signAndSubmitTransaction(payload);
       const txHash = pendingTx?.hash || pendingTx;
 
       const updated = [...completed];
@@ -102,7 +113,7 @@ export default function Home() {
       alert(`Quest Completed Successfully! 🎉\n\nTask: ${quests[index]}\n\nTX Hash: ${txHash}`);
     } catch (err) {
       console.error("Tx Error: ", err);
-      alert("ট্রানজেকশনটি সম্পন্ন করা যায়নি।");
+      alert("ট্রানজেকশন সাবমিট করা যায়নি বা ক্যানসেল হয়েছে।");
     }
   };
 
@@ -133,7 +144,7 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Network & Progress Summary */}
+        {/* Progress Section */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
           <div className="md:col-span-2 border border-zinc-800 p-6 rounded-2xl bg-zinc-900/40 backdrop-blur-sm">
             <h2 className="text-xl font-semibold text-zinc-200">Quest Progress</h2>
@@ -153,7 +164,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Quests Container */}
+        {/* Quests List */}
         <div className="mt-8 space-y-3">
           {quests.map((q, index) => (
             <div 
@@ -181,7 +192,7 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Reward Area */}
+        {/* Reward Section */}
         <div className="mt-8 border border-zinc-800 p-6 rounded-2xl bg-gradient-to-b from-zinc-900/50 to-purple-950/10 relative overflow-hidden">
           <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
           <h2 className="text-2xl font-bold text-zinc-100">Reward Hub 🎁</h2>
