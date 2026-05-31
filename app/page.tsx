@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useWallet } from "@aptos-labs/wallet-adapter-react";
+import { InputTransactionData } from "@aptos-labs/wallet-adapter-react";
 
 const SHELBYNET_CONFIG = {
   fullnode: "https://api.shelbynet.shelby.xyz/v1",
@@ -12,9 +14,8 @@ export default function Home() {
   const [completed, setCompleted] = useState([
     false, false, false, false, false, false, false
   ]);
-  const [walletConnected, setWalletConnected] = useState(false);
-  const [accountAddress, setAccountAddress] = useState("");
-  const [provider, setProvider] = useState<any>(null);
+
+  const { connect, disconnect, account, connected, signAndSubmitTransaction, wallets } = useWallet();
 
   const quests = [
     "Say GM to Shelby Protocol", 
@@ -28,92 +29,57 @@ export default function Home() {
 
   const done = completed.filter(Boolean).length;
   const progress = (done / quests.length) * 100;
+  const accountAddress = account?.address?.toString() || "";
 
-  // Petra / Aptos অফিশিয়াল ইভেন্ট লিসেনার লজিক (Deep Research Fix)
-  useEffect(() => {
-    const handleInitialized = () => {
-      if ("aptos" in window) {
-        setProvider((window as any).aptos);
-      } else if ("petra" in window) {
-        setProvider((window as any).petra);
-      }
-    };
-
-    // যদি Petra অলরেডি ব্রাউজারে ইনজেক্টেড থাকে
-    if ("aptos" in window || "petra" in window) {
-      handleInitialized();
-    }
-
-    // Petra-র নিজস্ব অফিশিয়াল ইনজেকশন লিসেনার ইভেন্ট
-    window.addEventListener("aptos#initialized", handleInitialized);
-    
-    return () => {
-      window.removeEventListener("aptos#initialized", handleInitialized);
-    };
-  }, []);
-
-  // ওয়ালেট কানেক্ট করার মাস্টার ফাংশন
   const connectWallet = async () => {
     try {
-      // ফ্যালব্যাক রান যদি কোনো কারণে স্টেট আপডেট হতে দেরি হয়
-      const activeProvider = provider || (typeof window !== "undefined" ? (window as any).aptos : null);
-
-      if (!activeProvider) {
-        alert("Petra Wallet খুঁজে পাওয়া যায়নি! দয়া করে আপনার ব্রাউজারে Petra Wallet এক্সটেনশনটি চেক করুন এবং এটি আনলক করুন।");
+      if (connected) {
+        await disconnect();
         return;
       }
 
-      // Petra অফিশিয়াল হ্যান্ডশেক এবং কানেকশন রিকোয়েস্ট
-      const connectionResponse = await activeProvider.connect();
-      
-      // বিভিন্ন Petra ভার্সনের ডেটা স্ট্রাকচার হ্যান্ডেল করা
-      const address = connectionResponse?.address || connectionResponse;
+      const petraWallet = wallets?.find(
+        (w) => w.name.toLowerCase().includes("petra") || w.name === "Petra"
+      );
 
-      if (address && typeof address === "string") {
-        setAccountAddress(address);
-        setWalletConnected(true);
+      if (petraWallet) {
+        await connect(petraWallet.name);
       } else {
-        // ওল্ড জেনারেশন মেথড কল ব্যাকআপ
-        const accountData = await activeProvider.account();
-        if (accountData?.address) {
-          setAccountAddress(accountData.address);
-          setWalletConnected(true);
-        }
+        alert("Petra Wallet not found! Please install the Petra Wallet extension.");
+        window.open("https://petra.app/", "_blank");
       }
     } catch (err: any) {
-      console.error("Deep Connection Error:", err);
+      console.error("Connection Error:", err);
       alert("Failed to connect wallet: " + (err?.message || "User rejected or wallet is locked."));
     }
   };
 
-  // Shelbynet ট্রানজেকশন ইন্টারঅ্যাকশন
   const toggleQuest = async (index: number) => {
     try {
-      const activeProvider = provider || (typeof window !== "undefined" ? (window as any).aptos : null);
-      if (!activeProvider) {
-        alert("Wallet provider missing!");
+      if (!connected || !accountAddress) {
+        alert("Wallet provider missing or disconnected!");
         return;
       }
 
-      // Aptos L1 স্ট্যান্ডার্ড জিরো-ভ্যালু কোর ট্রান্সফার পেলোড
-      const payload = {
-        type: "entry_function_payload",
-        function: "0x1::aptos_account::transfer",
-        type_arguments: [],
-        arguments: [accountAddress || "0x1", "0"], 
+      const transaction: InputTransactionData = {
+        data: {
+          function: "0x1::aptos_account::transfer",
+          typeArguments: [],
+          functionArguments: [accountAddress, "0"],
+        }
       };
 
-      const pendingTx = await activeProvider.signAndSubmitTransaction(payload);
-      const txHash = pendingTx?.hash || pendingTx;
+      const response = await signAndSubmitTransaction(transaction);
+      const txHash = response?.hash || "";
 
       const updated = [...completed];
       updated[index] = true;
       setCompleted(updated);
 
       alert(`Quest Completed Successfully! 🎉\n\nTask: ${quests[index]}\n\nTX Hash: ${txHash}`);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Tx Error: ", err);
-      alert("ট্রানজেকশন সাবমিট করা যায়নি বা ক্যানসেল হয়েছে।");
+      alert("ট্রানজেকশন সাবমিট করা যায়নি বা ক্যানসেল হয়েছে।");
     }
   };
 
@@ -135,12 +101,12 @@ export default function Home() {
           <button 
             onClick={connectWallet}
             className={`mt-4 md:mt-0 px-5 py-2.5 rounded-xl font-bold text-sm transition-all border ${
-              walletConnected 
+              connected 
                 ? "bg-purple-950/40 text-purple-400 border-purple-500/30" 
                 : "bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:opacity-90 border-transparent shadow-lg shadow-purple-600/20"
             }`}
           >
-            {walletConnected ? `Connected: ${accountAddress.slice(0,6)}...${accountAddress.slice(-4)}` : "Connect Petra Wallet"}
+            {connected ? `Connected: ${accountAddress.slice(0,6)}...${accountAddress.slice(-4)}` : "Connect Petra Wallet"}
           </button>
         </div>
 
@@ -176,12 +142,12 @@ export default function Home() {
                 <span className="text-zinc-200 font-medium md:text-lg">{q}</span>
               </div>
               <button
-                disabled={!walletConnected || completed[index]}
+                disabled={!connected || completed[index]}
                 onClick={() => toggleQuest(index)}
                 className={`px-5 py-2 rounded-lg font-bold text-sm transition-all ${
                   completed[index] 
                     ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 cursor-default" 
-                    : !walletConnected
+                    : !connected
                     ? "bg-zinc-900 text-zinc-600 border border-zinc-800 cursor-not-allowed"
                     : "bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700"
                 }`}
