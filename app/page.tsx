@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 
-// shelbynet নেটওয়ার্কের RPC কনফিগারেশন
 const SHELBYNET_CONFIG = {
   fullnode: "https://api.shelbynet.shelby.xyz/v1",
   shelbyRpc: "https://api.shelbynet.shelby.xyz/shelby",
@@ -15,6 +14,7 @@ export default function Home() {
   ]);
   const [walletConnected, setWalletConnected] = useState(false);
   const [accountAddress, setAccountAddress] = useState("");
+  const [walletInstance, setWalletInstance] = useState<any>(null);
 
   const quests = [
     "Say GM to Shelby Protocol", 
@@ -29,73 +29,77 @@ export default function Home() {
   const done = completed.filter(Boolean).length;
   const progress = (done / quests.length) * 100;
 
-  // Petra Wallet ইন্সটলড আছে কিনা চেক করার গ্লোবাল মেথড
-  const getPetraWallet = () => {
-    if (typeof window !== "undefined") {
-      if ("aptos" in window) {
-        return (window as any).aptos;
+  // ব্রাউজার লোড হওয়ার পর Petra/Aptos ওয়ালেট খুঁজে বের করার ইফেক্ট লুপ
+  useEffect(() => {
+    const detectWallet = () => {
+      const win = typeof window !== "undefined" ? (window as any) : null;
+      if (win) {
+        const provider = win.aptos || win.petra || (win.AptosWallet ? win.AptosWallet : null);
+        if (provider) {
+          setWalletInstance(provider);
+        }
       }
-      if ("petra" in window) {
-        return (window as any).petra;
-      }
-    }
-    return null;
-  };
+    };
+
+    detectWallet();
+    // যদি এক্সটেনশন লোড হতে দেরি হয়, তার জন্য একটা ব্যাকআপ ইভেন্ট লিসেনার
+    window.addEventListener("load", detectWallet);
+    return () => window.removeEventListener("load", detectWallet);
+  }, []);
 
   // ওয়ালেট কানেক্ট করার ফাংশন
   const connectWallet = async () => {
     try {
-      const wallet = getPetraWallet();
-      
-      if (!wallet) {
-        alert("Petra Wallet Extension found না! দয়া করে আপনার ব্রাউজারে Petra Wallet এক্সটেনশনটি চেক করুন।");
-        window.open("https://petra.app/", "_blank");
+      // যদি স্টেট-এ ইনস্ট্যান্স না থাকে, সরাসরি উইন্ডো থেকে আবার ট্রাই করবে
+      const win = typeof window !== "undefined" ? (window as any) : null;
+      const currentWallet = walletInstance || win?.aptos || win?.petra;
+
+      if (!currentWallet) {
+        alert("Petra Wallet Extension পাওয়া যায়নি! দয়া করে নিশ্চিত করুন আপনার ব্রাউজারে Petra ইন্সটলড আছে।");
         return;
       }
-      
-      // Petra এর অফিসিয়াল কানেক্ট ও অ্যাকাউন্ট রিকোয়েস্ট
-      const account = await wallet.connect();
-      
-      // কিছু ক্ষেত্রে রেসপন্স সরাসরি অবজেক্ট দেয়, কিছু ক্ষেত্রে স্ট্রিং এড্রেস দেয়
+
+      // কানেক্ট রিকোয়েস্ট
+      const account = await currentWallet.connect();
+      // এড্রেস এক্সট্রাক্ট করা (অবজেক্ট বা স্ট্রিং ফরম্যাট হ্যান্ডেল করতে)
       const address = account?.address || account;
-      
+
       if (address && typeof address === "string") {
         setAccountAddress(address);
         setWalletConnected(true);
       } else {
-        // অল্টারনেটিভ চেক যদি মেইন কানেক্টে এড্রেস মিস হয়
-        const activeAccount = await wallet.account();
-        if (activeAccount && activeAccount.address) {
+        // অল্টারনেটিভ ডিরেক্ট অ্যাকাউন্ট মেথড কল
+        const activeAccount = await currentWallet.account();
+        if (activeAccount?.address) {
           setAccountAddress(activeAccount.address);
           setWalletConnected(true);
         }
       }
     } catch (err) {
-      console.error("Wallet connection error: ", err);
-      alert("Failed to connect wallet! অনুগ্রহ করে Petra Wallet-এর পপ-আপটি অ্যাপ্রুভ করুন বা ওয়ালেটটি আনলক করুন।");
+      console.error("Connection Error: ", err);
+      alert("Petra Wallet কানেক্ট করা যায়নি। দয়া করে আপনার ওয়ালেট এক্সটেনশনটি আনলক (Password দিন) করে আবার চেষ্টা করুন।");
     }
   };
 
-  // Shelbynet-এ কাস্টম জিরো-ভ্যালু ট্রানজেকশন ইন্টারঅ্যাকশন
+  // Shelbynet-এ কাস্টম ট্রানজেকশন ইন্টারঅ্যাকশন
   const toggleQuest = async (index: number) => {
     try {
-      const wallet = getPetraWallet();
-      if (!wallet) {
-        alert("Wallet not found!");
+      const win = typeof window !== "undefined" ? (window as any) : null;
+      const currentWallet = walletInstance || win?.aptos || win?.petra;
+
+      if (!currentWallet) {
+        alert("Wallet structure missing!");
         return;
       }
 
-      // জিরো-ভ্যালু কোর ট্রান্সফার পেলোড
       const transactionPayload = {
-        arguments: [accountAddress || "0x1", "0"], 
-        function: "0x1::aptos_account::transfer",
         type: "entry_function_payload",
+        function: "0x1::aptos_account::transfer",
         type_arguments: [],
+        arguments: [accountAddress || "0x1", "0"], 
       };
 
-      // Petra এর স্ট্যান্ডার্ড সাইন এবং সাবমিট ট্রানজেকশন মেথড
-      const pendingTx = await wallet.signAndSubmitTransaction(transactionPayload);
-      
+      const pendingTx = await currentWallet.signAndSubmitTransaction(transactionPayload);
       const txHash = pendingTx?.hash || pendingTx;
 
       const updated = [...completed];
@@ -105,8 +109,8 @@ export default function Home() {
       alert(`Quest Completed Successfully! 🎉\n\nTask: ${quests[index]}\n\nNetwork: Shelbynet\nTX Hash: ${txHash}`);
 
     } catch (err) {
-      console.error("Transaction execution error: ", err);
-      alert("Transaction rejected or failed on Shelbynet / Petra.");
+      console.error("Tx Error: ", err);
+      alert("ট্রানজেকশন ক্যানসেল করা হয়েছে বা Shelbynet-এ ফেইল হয়েছে।");
     }
   };
 
@@ -169,11 +173,13 @@ export default function Home() {
                 <span className="text-zinc-200 font-medium md:text-lg">{q}</span>
               </div>
               <button
-                disabled={completed[index]}
+                disabled={!walletConnected || completed[index]}
                 onClick={() => toggleQuest(index)}
                 className={`px-5 py-2 rounded-lg font-bold text-sm transition-all ${
                   completed[index] 
                     ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 cursor-default" 
+                    : !walletConnected
+                    ? "bg-zinc-900 text-zinc-600 border border-zinc-800 cursor-not-allowed"
                     : "bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700"
                 }`}
               >
