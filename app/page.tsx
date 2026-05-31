@@ -29,55 +29,75 @@ export default function Home() {
   const done = completed.filter(Boolean).length;
   const progress = (done / quests.length) * 100;
 
+  // Petra / Aptos ওয়ালেট খোঁজার ফাংশন
+  const getWallet = () => {
+    if (typeof window !== "undefined") {
+      return (window as any).aptos || (window as any).petra || (window as any).shelby;
+    }
+    return null;
+  };
+
   // ওয়ালেট কানেক্ট করার ফাংশন
   const connectWallet = async () => {
     try {
-      const aptos = (window as any).aptos || (window as any).shelby;
-      if (!aptos) {
-        alert("Shelby/Aptos Wallet Extension not found! Please open your wallet.");
+      const wallet = getWallet();
+      if (!wallet) {
+        alert("Petra or Aptos Wallet Extension not found! Please install or open your wallet.");
         return;
       }
-      const response = await aptos.connect();
-      setAccountAddress(response.address);
-      setWalletConnected(true);
+      
+      // Petra/Aptos স্ট্যান্ডার্ড কানেক্ট মেথড
+      const response = await wallet.connect();
+      
+      // কিছু ওয়ালেটে সরাসরি রেসপন্সে অ্যাড্রেস থাকে, কিছুতে অবজেক্ট আকারে থাকে
+      const address = response?.address || response;
+      if (address) {
+        setAccountAddress(address);
+        setWalletConnected(true);
+      } else {
+        // ওল্ড Petra সংস্করণ বা অন্যান্য ওয়ালেটের জন্য বিকল্প চেক
+        const account = await wallet.account();
+        setAccountAddress(account.address);
+        setWalletConnected(true);
+      }
     } catch (err) {
       console.error(err);
-      alert("Failed to connect wallet.");
+      alert("Failed to connect wallet. Make sure your wallet is unlocked.");
     }
   };
 
   // Shelbynet-এ কাস্টম জিরো-ভ্যালু ট্রানজেকশন ইন্টারঅ্যাকশন
   const toggleQuest = async (index: number) => {
     try {
-      const aptos = (window as any).aptos || (window as any).shelby;
-      if (!aptos) {
+      const wallet = getWallet();
+      if (!wallet) {
         alert("Wallet not found!");
         return;
       }
 
       // নিশ্চিত হওয়া যে ওয়ালেটটি কানেক্টেড আছে
-      const account = await aptos.connect();
+      await wallet.connect();
 
-      // Aptos L1 কোর ট্রান্সফার মেথডের মাধ্যমে জিরো-ভ্যালু ট্রানজেকশন তৈরি
+      // Aptos L1 কোর ট্রান্সফার মেথডের মাধ্যমে জিরো-ভ্যালু ট্রানজেকশন পেলোড
       const transactionPayload = {
         type: "entry_function_payload",
         function: "0x1::aptos_account::transfer",
         type_arguments: [],
-        arguments: [account.address, 0], 
+        arguments: [accountAddress || "0x1", 0], 
       };
 
       // ট্রানজেকশন পপ-আপ রিকোয়েস্ট পাঠানো
-      const pendingTx = await aptos.signAndSubmitTransaction(transactionPayload);
+      const pendingTx = await wallet.signAndSubmitTransaction(transactionPayload);
 
       const updated = [...completed];
       updated[index] = true;
       setCompleted(updated);
 
-      alert(`Quest Completed Successfully! 🎉\n\nTask: ${quests[index]}\n\nNetwork: Shelbynet\nTX Hash: ${pendingTx.hash}`);
+      alert(`Quest Completed Successfully! 🎉\n\nTask: ${quests[index]}\n\nNetwork: Shelbynet\nTX Hash: ${pendingTx.hash || pendingTx}`);
 
     } catch (err) {
       console.error(err);
-      alert("Transaction rejected or failed on Shelbynet.");
+      alert("Transaction rejected or failed on Shelbynet / Petra.");
     }
   };
 
@@ -104,7 +124,7 @@ export default function Home() {
                 : "bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:opacity-90 border-transparent shadow-lg shadow-purple-600/20"
             }`}
           >
-            {walletConnected ? `Connected: ${accountAddress.slice(0,6)}...${accountAddress.slice(-4)}` : "Connect Shelby Wallet"}
+            {walletConnected ? `Connected: ${accountAddress.slice(0,6)}...${accountAddress.slice(-4)}` : "Connect Petra / Shelby Wallet"}
           </button>
         </div>
 
