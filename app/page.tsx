@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 // shelbynet নেটওয়ার্কের RPC কনফিগারেশন
 const SHELBYNET_CONFIG = {
@@ -29,10 +29,15 @@ export default function Home() {
   const done = completed.filter(Boolean).length;
   const progress = (done / quests.length) * 100;
 
-  // Petra / Aptos ওয়ালেট খোঁজার ফাংশন
-  const getWallet = () => {
+  // Petra Wallet ইন্সটলড আছে কিনা চেক করার গ্লোবাল মেথড
+  const getPetraWallet = () => {
     if (typeof window !== "undefined") {
-      return (window as any).aptos || (window as any).petra || (window as any).shelby;
+      if ("aptos" in window) {
+        return (window as any).aptos;
+      }
+      if ("petra" in window) {
+        return (window as any).petra;
+      }
     }
     return null;
   };
@@ -40,63 +45,67 @@ export default function Home() {
   // ওয়ালেট কানেক্ট করার ফাংশন
   const connectWallet = async () => {
     try {
-      const wallet = getWallet();
+      const wallet = getPetraWallet();
+      
       if (!wallet) {
-        alert("Petra or Aptos Wallet Extension not found! Please install or open your wallet.");
+        alert("Petra Wallet Extension found না! দয়া করে আপনার ব্রাউজারে Petra Wallet এক্সটেনশনটি চেক করুন।");
+        window.open("https://petra.app/", "_blank");
         return;
       }
       
-      // Petra/Aptos স্ট্যান্ডার্ড কানেক্ট মেথড
-      const response = await wallet.connect();
+      // Petra এর অফিসিয়াল কানেক্ট ও অ্যাকাউন্ট রিকোয়েস্ট
+      const account = await wallet.connect();
       
-      // কিছু ওয়ালেটে সরাসরি রেসপন্সে অ্যাড্রেস থাকে, কিছুতে অবজেক্ট আকারে থাকে
-      const address = response?.address || response;
-      if (address) {
+      // কিছু ক্ষেত্রে রেসপন্স সরাসরি অবজেক্ট দেয়, কিছু ক্ষেত্রে স্ট্রিং এড্রেস দেয়
+      const address = account?.address || account;
+      
+      if (address && typeof address === "string") {
         setAccountAddress(address);
         setWalletConnected(true);
       } else {
-        // ওল্ড Petra সংস্করণ বা অন্যান্য ওয়ালেটের জন্য বিকল্প চেক
-        const account = await wallet.account();
-        setAccountAddress(account.address);
-        setWalletConnected(true);
+        // অল্টারনেটিভ চেক যদি মেইন কানেক্টে এড্রেস মিস হয়
+        const activeAccount = await wallet.account();
+        if (activeAccount && activeAccount.address) {
+          setAccountAddress(activeAccount.address);
+          setWalletConnected(true);
+        }
       }
     } catch (err) {
-      console.error(err);
-      alert("Failed to connect wallet. Make sure your wallet is unlocked.");
+      console.error("Wallet connection error: ", err);
+      alert("Failed to connect wallet! অনুগ্রহ করে Petra Wallet-এর পপ-আপটি অ্যাপ্রুভ করুন বা ওয়ালেটটি আনলক করুন।");
     }
   };
 
   // Shelbynet-এ কাস্টম জিরো-ভ্যালু ট্রানজেকশন ইন্টারঅ্যাকশন
   const toggleQuest = async (index: number) => {
     try {
-      const wallet = getWallet();
+      const wallet = getPetraWallet();
       if (!wallet) {
         alert("Wallet not found!");
         return;
       }
 
-      // নিশ্চিত হওয়া যে ওয়ালেটটি কানেক্টেড আছে
-      await wallet.connect();
-
-      // Aptos L1 কোর ট্রান্সফার মেথডের মাধ্যমে জিরো-ভ্যালু ট্রানজেকশন পেলোড
+      // জিরো-ভ্যালু কোর ট্রান্সফার পেলোড
       const transactionPayload = {
-        type: "entry_function_payload",
+        arguments: [accountAddress || "0x1", "0"], 
         function: "0x1::aptos_account::transfer",
+        type: "entry_function_payload",
         type_arguments: [],
-        arguments: [accountAddress || "0x1", 0], 
       };
 
-      // ট্রানজেকশন পপ-আপ রিকোয়েস্ট পাঠানো
+      // Petra এর স্ট্যান্ডার্ড সাইন এবং সাবমিট ট্রানজেকশন মেথড
       const pendingTx = await wallet.signAndSubmitTransaction(transactionPayload);
+      
+      const txHash = pendingTx?.hash || pendingTx;
 
       const updated = [...completed];
       updated[index] = true;
       setCompleted(updated);
 
-      alert(`Quest Completed Successfully! 🎉\n\nTask: ${quests[index]}\n\nNetwork: Shelbynet\nTX Hash: ${pendingTx.hash || pendingTx}`);
+      alert(`Quest Completed Successfully! 🎉\n\nTask: ${quests[index]}\n\nNetwork: Shelbynet\nTX Hash: ${txHash}`);
 
     } catch (err) {
-      console.error(err);
+      console.error("Transaction execution error: ", err);
       alert("Transaction rejected or failed on Shelbynet / Petra.");
     }
   };
@@ -124,7 +133,7 @@ export default function Home() {
                 : "bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:opacity-90 border-transparent shadow-lg shadow-purple-600/20"
             }`}
           >
-            {walletConnected ? `Connected: ${accountAddress.slice(0,6)}...${accountAddress.slice(-4)}` : "Connect Petra / Shelby Wallet"}
+            {walletConnected ? `Connected: ${accountAddress.slice(0,6)}...${accountAddress.slice(-4)}` : "Connect Petra Wallet"}
           </button>
         </div>
 
